@@ -5,6 +5,7 @@ import torch
 from torch.optim import Adam
 import gym
 import time
+import rospy
 import spinup.algos.pytorch.sac.core as core
 from spinup.utils.logx import EpochLogger
 
@@ -46,7 +47,7 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
         steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
         update_after=1000, update_every=50, num_test_episodes=10, max_ep_len=1000, 
-        logger_kwargs=dict(), save_freq=1):
+        logger_kwargs=dict(), save_freq=1, load=False):
     """
     Soft Actor-Critic (SAC)
 
@@ -144,6 +145,8 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
         save_freq (int): How often (in terms of gap between epochs) to save
             the current policy and value function.
 
+        load (Bool): Load a trained model
+
     """
 
     logger = EpochLogger(**logger_kwargs)
@@ -230,7 +233,11 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
     q_optimizer = Adam(q_params, lr=lr)
 
     # Set up model saving
-    logger.setup_pytorch_saver(ac)
+    if load:
+        saved_model = logger['outdir'] + '/pyth_save/mdel.pt'
+        ac = torch.load(saved_model)
+    else:
+        logger.setup_pytorch_saver(ac)
 
     def update(data):
         # First run one gradient descent step for Q1 and Q2
@@ -281,11 +288,13 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            rospy.loginfo("# /// Deterministic Test Reward /// => {}".format(ep_ret))
 
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs
     start_time = time.time()
     o, ep_ret, ep_len = env.reset(), 0, 0
+    highest_reward = -np.inf
 
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
@@ -318,6 +327,18 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
         # End of trajectory handling
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
+            if d:
+                rospy.loginfo("EPISODE FINISHED BY DONE FLAG")
+                rospy.loginfo("# FINAL episode length => {}".format(ep_len))
+                rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
+                #logger.store(TimeToGoal=ep_len)
+            else:
+                rospy.loginfo("EPISODE FINISHED BY TIMEOUT")
+                rospy.loginfo("# FINAL episode length => {}".format(ep_len))
+                rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
+            highest_reward = max(highest_reward, ep_ret)
+            rospy.loginfo("# Highest reward yet => {}".format(highest_reward))
+                
             o, ep_ret, ep_len = env.reset(), 0, 0
 
         # Update handling
@@ -339,21 +360,24 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
               test_agent()
 
             # Log info about epoch
-            logger.log_tabular('Epoch', epoch)
-            logger.log_tabular('EpRet', with_min_and_max=True)
-            if perform_test:
-              logger.log_tabular('TestEpRet', with_min_and_max=True)
-            logger.log_tabular('EpLen', average_only=True)
-            if perform_test:
-              logger.log_tabular('TestEpLen', average_only=True)
-            logger.log_tabular('TotalEnvInteracts', t)
-            logger.log_tabular('Q1Vals', with_min_and_max=True)
-            logger.log_tabular('Q2Vals', with_min_and_max=True)
-            logger.log_tabular('LogPi', with_min_and_max=True)
-            logger.log_tabular('LossPi', average_only=True)
-            logger.log_tabular('LossQ', average_only=True)
-            logger.log_tabular('Time', time.time()-start_time)
-            logger.dump_tabular()
+            if 'Q1Vals' in logger.epoch_dict:
+              logger.log_tabular('Epoch', epoch)
+              logger.log_tabular('EpRet', with_min_and_max=True)
+              logger.log_tabular('Done', average_only=True)
+              if perform_test:
+                logger.log_tabular('TestEpRet', with_min_and_max=True)
+              logger.log_tabular('EpLen', average_only=True)
+              if perform_test:
+                logger.log_tabular('TestEpLen', average_only=True)
+              logger.log_tabular('TotalEnvInteracts', t)
+              logger.log_tabular('Q1Vals', with_min_and_max=True)
+              logger.log_tabular('Q2Vals', with_min_and_max=True)
+              logger.log_tabular('LogPi', with_min_and_max=True)
+              logger.log_tabular('LossPi', average_only=True)
+              logger.log_tabular('LossQ', average_only=True)
+              logger.log_tabular('Time', time.time()-start_time)
+              #logger.log_tabular('TimeToGoal', average_only=True)
+              logger.dump_tabular()
 
 if __name__ == '__main__':
     import argparse

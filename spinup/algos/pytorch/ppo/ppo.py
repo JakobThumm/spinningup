@@ -3,6 +3,7 @@ import torch
 from torch.optim import Adam
 import gym
 import time
+import rospy
 import spinup.algos.pytorch.ppo.core as core
 from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
@@ -290,9 +291,11 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Prepare for interaction with environment
     start_time = time.time()
     o, ep_ret, ep_len = env.reset(), 0, 0
-
+    highest_reward = -np.inf
+    
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
+        rospy.loginfo("############### START EPOCH => {}".format(epoch))
         for t in range(local_steps_per_epoch):
             a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
 
@@ -311,6 +314,15 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             terminal = d or timeout
             epoch_ended = t==local_steps_per_epoch-1
 
+            if d:
+                rospy.loginfo("EPISODE FINISHED BY DONE FLAG")
+                rospy.loginfo("# FINAL episode length => {}".format(ep_len))
+                rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
+            elif timeout or epoch_ended:
+                rospy.loginfo("EPISODE FINISHED BY TIMEOUT")
+                rospy.loginfo("# FINAL episode length => {}".format(ep_len))
+                rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
+
             if terminal or epoch_ended:
                 if epoch_ended and not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
@@ -323,6 +335,8 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
                     logger.store(EpRet=ep_ret, EpLen=ep_len)
+                highest_reward = max(highest_reward, ep_ret)
+                rospy.loginfo("# Highest reward yet => {}".format(highest_reward))
                 o, ep_ret, ep_len = env.reset(), 0, 0
 
 
