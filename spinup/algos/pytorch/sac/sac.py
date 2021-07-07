@@ -363,7 +363,7 @@ def sac(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=
             if 'Q1Vals' in logger.epoch_dict:
               logger.log_tabular('Epoch', epoch)
               logger.log_tabular('EpRet', with_min_and_max=True)
-              logger.log_tabular('Done', average_only=True)
+              #logger.log_tabular('Done', average_only=True)
               if perform_test:
                 logger.log_tabular('TestEpRet', with_min_and_max=True)
               logger.log_tabular('EpLen', average_only=True)
