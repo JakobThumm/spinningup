@@ -343,7 +343,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
 
         # If episode done: break episode
         if d:
-          if env.get_collision_from_obs(o2):
+          if env.env._get_collision_from_obs(o2):
             collided = True
           else:
             # Maybe not the cleanest check. #TODO improve this.
@@ -381,10 +381,10 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
           # Get a new goal observation
           o_new_goal, _, _, _, _ = local_buffer.get_transition_at(new_goal_id)
           # Extract the goal from the observation
-          new_goal = env.get_state_from_obs(o_new_goal)
-          o_her = env.replace_goal_in_obs(o_t, new_goal)
-          o2_her = env.replace_goal_in_obs(o2_t, new_goal)
-          r_her =  env.compute_reward(o2_t, 0)
+          new_goal = env.env._get_state_from_obs(o_new_goal)
+          o_her = env.env._replace_goal_in_obs(o_t, new_goal)
+          o2_her = env.env._replace_goal_in_obs(o2_t, new_goal)
+          r_her =  env.env._compute_reward(o2_t, 0)
           if r_her == 0:
             d_her = 1
           else:
