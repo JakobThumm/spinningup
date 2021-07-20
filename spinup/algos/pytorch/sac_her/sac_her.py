@@ -49,7 +49,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
         n_epochs = 100, n_episodes_per_epoch = 20, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
         update_after=1000, update_every=50, num_test_episodes=10, max_ep_len=20, 
-        k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load=False):
+        n_updates = 40, k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load=False):
   """
   Soft Actor-Critic (SAC) with Hindsight Experience Replay
 
@@ -143,6 +143,8 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
           policy at the end of each epoch.
 
       max_ep_len (int): Maximum length of trajectory / episode / rollout.
+
+      n_updates (int): Number of update steps at each update
 
       k_her_samples (int): Number of additional HER transitions per real transition
 
@@ -299,6 +301,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
   start_time = time.time()
   highest_reward = -np.inf
   t_total = 0
+  t_last_update = 0
 
   
   for epoch in range(n_epochs):
@@ -334,13 +337,6 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
         # Increment t_total
         t_total += 1
 
-        # Update handling
-        # TODO Make this in parallel with resetting episode to save time.
-        if t_total >= update_after and t_total % update_every == 0:
-          for j in range(update_every):
-            batch = replay_buffer.sample_batch(batch_size)
-            update(data=batch)
-
         # If episode done: break episode
         if d:
           if env.env._get_collision_from_obs(o2):
@@ -349,7 +345,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
             # Maybe not the cleanest check. #TODO improve this.
             goal_reached = True
           break
-
+      
       ## End of episode
       logger.store(EpRet=ep_ret, EpLen=t, GoalReached=goal_reached, Collided=collided)
       if collided:
@@ -390,6 +386,14 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
           else:
             d_her = d_t
           replay_buffer.store(o_her, a_t, r_her, o2_her, d_her)
+      ## Update handling
+      # TODO Make this in parallel?
+      if t_total >= update_after: #and (t_total-t_last_update) >= update_every:
+        # Update for amount of environment steps done
+        for j in range(n_updates):#t_total-t_last_update):
+          batch = replay_buffer.sample_batch(batch_size)
+          update(data=batch)
+        #t_last_update = t_total
     ## End of epoch
     # Save model
     if (epoch % save_freq == 0) or (epoch == n_epochs):
