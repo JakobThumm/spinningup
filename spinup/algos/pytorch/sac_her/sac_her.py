@@ -314,6 +314,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
       local_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=max_ep_len)
       goal_reached = False
       collided = False
+      critically_collided = False
       for t in range(max_ep_len):
         # Until start_steps have elapsed, randomly sample actions
         # from a uniform distribution for better exploration. Afterwards, 
@@ -341,13 +342,16 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
         if d:
           if env.env._get_collision_from_obs(o2):
             collided = True
+            if env.env._get_critical_collision_from_obs(o2):
+              critically_collided = True
           else:
             # Maybe not the cleanest check. #TODO improve this.
             goal_reached = True
           break
       
       ## End of episode
-      logger.store(EpRet=ep_ret, EpLen=t, GoalReached=goal_reached, Collided=collided)
+      logger.store(EpRet=ep_ret, EpLen=t, GoalReached=goal_reached, Collided=collided, 
+          CriticallyCollided = critically_collided)
       if collided:
         rospy.logerr("EPISODE FINISHED BY COLLISION")
       elif goal_reached:
@@ -410,6 +414,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
       logger.log_tabular('EpRet', with_min_and_max=True)
       logger.log_tabular('GoalReached', average_only=True)
       logger.log_tabular('Collided', average_only=True)
+      logger.log_tabular('CriticallyCollided', average_only=True)
       if perform_test:
         logger.log_tabular('TestEpRet', with_min_and_max=True)
       logger.log_tabular('EpLen', average_only=True)
