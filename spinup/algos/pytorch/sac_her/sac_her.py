@@ -401,6 +401,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
 
     # Test the performance of the deterministic version of the agent.
     if perform_test:
+      rospy.logwarn("Performing test episode(s).")
       test_agent()
 
     # Log info about epoch
