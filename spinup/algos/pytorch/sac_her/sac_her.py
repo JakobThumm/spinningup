@@ -242,7 +242,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
 
   # Set up model saving
   if load:
-    saved_model = logger['outdir'] + '/pyth_save/mdel.pt'
+    saved_model = logger.output_dir + '/pyt_save/model.pt'
     ac = torch.load(saved_model)
   else:
     logger.setup_pytorch_saver(ac)
