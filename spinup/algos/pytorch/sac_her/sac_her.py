@@ -324,8 +324,12 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
         else:
             a = env.action_space.sample()
 
-        # Step the env
-        o2, r, d, _ = env.step(a)
+        # Step the env. 
+        o2, r, d, info = env.step(a)
+        # The robot control is allowed to change the action. For example if the action would result in collision.
+        if 'action' in info:
+          a = info['action']
+          
         ep_ret += r
 
         # Store experience to replay buffer
