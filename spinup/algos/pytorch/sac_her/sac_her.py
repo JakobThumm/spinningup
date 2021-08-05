@@ -289,12 +289,24 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
   def test_agent():
     for j in range(num_test_episodes):
       o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+      collided = False
+      critically_collided = False
+      goal_reached = False
       while not(d or (ep_len == max_ep_len)):
         # Take deterministic actions at test time 
         o, r, d, _ = test_env.step(get_action(o, True))
         ep_ret += r
         ep_len += 1
-      logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+        if d:
+          if env.env._get_collision_from_obs(o):
+            collided = True
+            if env.env._get_critical_collision_from_obs(o):
+              critically_collided = True
+          else:
+            # Maybe not the cleanest check. #TODO improve this.
+            goal_reached = True
+      logger.store(TestEpRet=ep_ret, TestEpLen=ep_len, TestGoalReached=goal_reached, TestCollided=collided, 
+          TestCriticallyCollided = critically_collided)
       rospy.loginfo("# /// Deterministic Test Reward /// => {}".format(ep_ret))
 
   # Prepare for interaction with environment
