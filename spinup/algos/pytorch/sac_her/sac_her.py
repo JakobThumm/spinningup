@@ -389,7 +389,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
           break
         # Add virtual episode to experience buffer
         # Choose k future transitions as new goals
-        remaining_ids = range(t_replay+1, t)
+        remaining_ids = range(t_replay+1, t-1)
         if len(remaining_ids) >= k_her_samples:
           remaining_ids = random.sample(remaining_ids, k_her_samples)
         # TODO: Incorporate collisions!
