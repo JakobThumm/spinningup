@@ -28,9 +28,7 @@ setup(
         'seaborn==0.8.1',
         'tensorflow==2.4.1',
         'torch',
-        'tqdm',
-        'pickle',
-        'os'
+        'tqdm'
     ],
     description="Teaching tools for introducing people to deep RL.",
     author="Joshua Achiam",
