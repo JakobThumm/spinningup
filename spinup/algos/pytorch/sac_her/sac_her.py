@@ -1,4 +1,6 @@
 from copy import deepcopy
+import os
+import pickle
 import random
 import itertools
 import numpy as np
@@ -44,12 +46,71 @@ class ReplayBuffer:
     return self.obs_buf[pos], self.act_buf[pos], self.rew_buf[pos], self.obs2_buf[pos], self.done_buf[pos]
 
 
+def save_model_training(path, epoch, ac, ac_targ, replay_buffer, pi_optimizer, q_optimizer, t_total):
+  """Save the model and all things necessary for continueing the training.
+  
+  Args:
+    path (str):     Path to the directory of checkpoints to save
+    epoch (int):    Current epoch number
+    ac:             Actor-critic model
+    ac_targ:        Target actor-critic model
+    replay_buffer:  Buffer that contains all transitions
+    pi_optimizer:   Adam optimizer for policy
+    q_optimizer:    Adam optimizer for q-value function approximator
+    t_total (int):  Total number of timesteps
+  """
+  checkpoint = {
+    'epoch': epoch,
+    'state_dict': ac.state_dict(),
+    'target_state_dict': ac_targ.state_dict(),
+    'pi_optimizer': pi_optimizer.state_dict(),
+    'q_optimizer': q_optimizer.state_dict(),
+    't_total': t_total
+  }
+  f_path = path + '/checkpoint_' + str(epoch) + '.pt'
+  torch.save(checkpoint, f_path)
+  rb_path = path + '/replay_buffer.pkl'
+  with open(rb_path, 'wb') as outp:
+    pickle.dump(replay_buffer, outp, pickle.HIGHEST_PROTOCOL)
+    
+
+def load_model_training(path, epoch, ac, ac_targ, pi_optimizer, q_optimizer):
+  """Load the model and all things necessary for continueing the training.
+  
+  Args:
+    path (str):     Path to the directory of checkpoints to save
+    epoch (int):    Current epoch number
+    ac:             Actor-critic model
+    ac_targ:        Target actor-critic model
+    pi_optimizer:   Adam optimizer for policy
+    q_optimizer:    Adam optimizer for q-value function approximator
+  
+  Returns:
+    ac:             Actor-critic model
+    ac_targ:        Target actor-critic model
+    replay_buffer:  Buffer that contains all transitions
+    pi_optimizer:   Adam optimizer for policy
+    q_optimizer:    Adam optimizer for q-value function approximator
+    t_total (int):  Total number of timesteps
+  """
+  checkpoint_path = path + '/checkpoint_' + str(epoch) + '.pt'
+  checkpoint = torch.load(checkpoint_path)
+  ac.load_state_dict(checkpoint['state_dict'])
+  ac_targ.load_state_dict(checkpoint['target_state_dict'])
+  pi_optimizer.load_state_dict(checkpoint['pi_optimizer'])
+  q_optimizer.load_state_dict(checkpoint['q_optimizer'])
+  # replay buffer
+  rb_path = path + '/replay_buffer.pkl'
+  with open(rb_path, 'rb') as inp:
+    replay_buffer = pickle.load(inp)
+  return ac, ac_targ, replay_buffer, pi_optimizer, q_optimizer, checkpoint['t_total']
+
 
 def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
         n_epochs = 100, n_episodes_per_epoch = 20, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
         update_after=1000, update_every=50, num_test_episodes=10, max_ep_len=20, 
-        n_updates = 40, k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load=False):
+        n_updates = 40, k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load_epoch=-1):
   """
   Soft Actor-Critic (SAC) with Hindsight Experience Replay
 
@@ -153,7 +214,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
       save_freq (int): How often (in terms of gap between epochs) to save
           the current policy and value function.
 
-      load (Bool): Load a trained model
+      load_epoch (int): If -1, don't load. If >= 0, load the given epoch checkpoint and continue training there.
 
   """
 
@@ -240,12 +301,6 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
   pi_optimizer = Adam(ac.pi.parameters(), lr=lr)
   q_optimizer = Adam(q_params, lr=lr)
 
-  # Set up model saving
-  if load:
-    saved_model = logger.output_dir + '/pyt_save/model.pt'
-    ac = torch.load(saved_model)
-  else:
-    logger.setup_pytorch_saver(ac)
 
   def update(data):
     # First run one gradient descent step for Q1 and Q2
@@ -314,9 +369,18 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
   highest_reward = -np.inf
   t_total = 0
   t_last_update = 0
-
+  start_epoch = 0
+  # Set up model saving
+  checkpoint_dir = logger.output_dir + '/checkpoints'
+  if load_epoch>=0:
+    start_epoch = load_epoch
+    ac, ac_targ, replay_buffer, pi_optimizer, q_optimizer, t_total = load_model_training(checkpoint_dir, load_epoch, ac, ac_targ, pi_optimizer, q_optimizer)
+    t_last_update = t_total
+  else:
+    os.makedirs(checkpoint_dir)
+    #logger.setup_pytorch_saver(ac)
   
-  for epoch in range(n_epochs):
+  for epoch in range(start_epoch, n_epochs):
     for episode in range(n_episodes_per_epoch):
       ## Real episode
       # Initialize s_init and goal
@@ -417,7 +481,8 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
     ## End of epoch
     # Save model
     if (epoch % save_freq == 0) or (epoch == n_epochs):
-        logger.save_state({'env': env}, None)
+        #logger.save_state({'env': env}, None)
+      save_model_training(path=checkpoint_dir, epoch=epoch, ac=ac, ac_targ=ac_targ, replay_buffer=replay_buffer, pi_optimizer=pi_optimizer, q_optimizer=q_optimizer, t_total=t_total)
 
     # Test the performance of the deterministic version of the agent.
     if perform_test:
