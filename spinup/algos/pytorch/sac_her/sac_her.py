@@ -110,7 +110,7 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
         n_epochs = 100, n_episodes_per_epoch = 20, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
         update_after=1000, update_every=50, num_test_episodes=10, max_ep_len=20, 
-        n_updates = 40, k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load_epoch=-1):
+        n_updates = 40, k_her_samples = 4, logger_kwargs=dict(), save_freq=1, load_epoch=-1, test_only=False):
   """
   Soft Actor-Critic (SAC) with Hindsight Experience Replay
 
@@ -215,6 +215,8 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
           the current policy and value function.
 
       load_epoch (int): If -1, don't load. If >= 0, load the given epoch checkpoint and continue training there.
+
+      test_only (Bool): Only test the agent.
 
   """
 
@@ -381,108 +383,109 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
     #logger.setup_pytorch_saver(ac)
   
   for epoch in range(start_epoch, n_epochs):
-    for episode in range(n_episodes_per_epoch):
-      ## Real episode
-      # Initialize s_init and goal
-      o = env.reset()
-      ep_ret = 0
-      d = False
-      local_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=max_ep_len)
-      goal_reached = False
-      collided = False
-      critically_collided = False
-      for t in range(max_ep_len):
-        # Until start_steps have elapsed, randomly sample actions
-        # from a uniform distribution for better exploration. Afterwards, 
-        # use the learned policy. 
-        if t_total > start_steps:
-            a = get_action(o)
+    if not test_only:
+      for episode in range(n_episodes_per_epoch):
+        ## Real episode
+        # Initialize s_init and goal
+        o = env.reset()
+        ep_ret = 0
+        d = False
+        local_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=max_ep_len)
+        goal_reached = False
+        collided = False
+        critically_collided = False
+        for t in range(max_ep_len):
+          # Until start_steps have elapsed, randomly sample actions
+          # from a uniform distribution for better exploration. Afterwards, 
+          # use the learned policy. 
+          if t_total > start_steps:
+              a = get_action(o)
+          else:
+              a = env.action_space.sample()
+
+          # Step the env. 
+          o2, r, d, info = env.step(a)
+          # The robot control is allowed to change the action. For example if the action would result in collision.
+          if 'action' in info:
+            a = info['action']
+            
+          ep_ret += r
+
+          # Store experience to replay buffer
+          local_buffer.store(o, a, r, o2, d)
+
+          # Super critical, easy to overlook step: make sure to update 
+          # most recent observation!
+          o = o2
+
+          # Increment t_total
+          t_total += 1
+
+          # If episode done: break episode
+          if d:
+            if env.env._get_collision_from_obs(o2):
+              collided = True
+              if env.env._get_critical_collision_from_obs(o2):
+                critically_collided = True
+            else:
+              # Maybe not the cleanest check. #TODO improve this.
+              goal_reached = True
+            break
+        
+        ## End of episode
+        logger.store(EpRet=ep_ret, EpLen=t, GoalReached=goal_reached, Collided=collided, 
+            CriticallyCollided = critically_collided)
+        if collided:
+          rospy.logerr("EPISODE FINISHED BY COLLISION")
+        elif goal_reached:
+          rospy.loginfo("EPISODE FINISHED BY REACHING THE GOAL")
         else:
-            a = env.action_space.sample()
-
-        # Step the env. 
-        o2, r, d, info = env.step(a)
-        # The robot control is allowed to change the action. For example if the action would result in collision.
-        if 'action' in info:
-          a = info['action']
-          
-        ep_ret += r
-
-        # Store experience to replay buffer
-        local_buffer.store(o, a, r, o2, d)
-
-        # Super critical, easy to overlook step: make sure to update 
-        # most recent observation!
-        o = o2
-
-        # Increment t_total
-        t_total += 1
-
-        # If episode done: break episode
-        if d:
-          if env.env._get_collision_from_obs(o2):
-            collided = True
-            if env.env._get_critical_collision_from_obs(o2):
-              critically_collided = True
-          else:
-            # Maybe not the cleanest check. #TODO improve this.
-            goal_reached = True
-          break
-      
-      ## End of episode
-      logger.store(EpRet=ep_ret, EpLen=t, GoalReached=goal_reached, Collided=collided, 
-          CriticallyCollided = critically_collided)
-      if collided:
-        rospy.logerr("EPISODE FINISHED BY COLLISION")
-      elif goal_reached:
-        rospy.loginfo("EPISODE FINISHED BY REACHING THE GOAL")
-      else:
-        rospy.logwarn("EPISODE FINISHED BY TIMEOUT")
-      rospy.loginfo("# FINAL episode length => {}".format(t))
-      rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
-      highest_reward = max(highest_reward, ep_ret)
-      rospy.loginfo("# Highest reward yet => {}".format(highest_reward))
-      ## HER
-      # Add real and virtual transitions to replay buffer
-      for t_replay in range(t):
-        # Add real transition to experience buffer
-        o_t, a_t, r_t, o2_t, d_t = local_buffer.get_transition_at(t_replay)
-        replay_buffer.store(o_t, a_t, r_t, o2_t, d_t)
-        # HER needs a future transition
-        if (t_replay == t):
-          break
-        # Add virtual episode to experience buffer
-        # Choose k future transitions as new goals
-        remaining_ids = range(t_replay+1, t-1)
-        if len(remaining_ids) >= k_her_samples:
-          remaining_ids = random.sample(remaining_ids, k_her_samples)
-        # TODO: Incorporate collisions!
-        for new_goal_id in remaining_ids:
-          # Get a new goal observation
-          o_new_goal, _, _, _, _ = local_buffer.get_transition_at(new_goal_id)
-          # Extract the goal from the observation
-          new_goal = env.env._get_state_from_obs(o_new_goal)
-          o_her = env.env._replace_goal_in_obs(o_t, new_goal)
-          o2_her = env.env._replace_goal_in_obs(o2_t, new_goal)
-          r_her =  env.env._compute_reward(o2_t, 0)
-          if r_her == 0:
-            d_her = 1
-          else:
-            d_her = d_t
-          replay_buffer.store(o_her, a_t, r_her, o2_her, d_her)
-      ## Update handling
-      # TODO Make this in parallel?
-      if t_total >= update_after: #and (t_total-t_last_update) >= update_every:
-        # Update for amount of environment steps done
-        for j in range(n_updates):#t_total-t_last_update):
-          batch = replay_buffer.sample_batch(batch_size)
-          update(data=batch)
-        #t_last_update = t_total
-    ## End of epoch
-    # Save model
-    if (epoch % save_freq == 0) or (epoch == n_epochs):
-        #logger.save_state({'env': env}, None)
-      save_model_training(path=checkpoint_dir, epoch=epoch, ac=ac, ac_targ=ac_targ, replay_buffer=replay_buffer, pi_optimizer=pi_optimizer, q_optimizer=q_optimizer, t_total=t_total)
+          rospy.logwarn("EPISODE FINISHED BY TIMEOUT")
+        rospy.loginfo("# FINAL episode length => {}".format(t))
+        rospy.loginfo("# FINAL episode cumulated reward => {}".format(ep_ret))
+        highest_reward = max(highest_reward, ep_ret)
+        rospy.loginfo("# Highest reward yet => {}".format(highest_reward))
+        ## HER
+        # Add real and virtual transitions to replay buffer
+        for t_replay in range(t):
+          # Add real transition to experience buffer
+          o_t, a_t, r_t, o2_t, d_t = local_buffer.get_transition_at(t_replay)
+          replay_buffer.store(o_t, a_t, r_t, o2_t, d_t)
+          # HER needs a future transition
+          if (t_replay == t):
+            break
+          # Add virtual episode to experience buffer
+          # Choose k future transitions as new goals
+          remaining_ids = range(t_replay+1, t-1)
+          if len(remaining_ids) >= k_her_samples:
+            remaining_ids = random.sample(remaining_ids, k_her_samples)
+          # TODO: Incorporate collisions!
+          for new_goal_id in remaining_ids:
+            # Get a new goal observation
+            o_new_goal, _, _, _, _ = local_buffer.get_transition_at(new_goal_id)
+            # Extract the goal from the observation
+            new_goal = env.env._get_state_from_obs(o_new_goal)
+            o_her = env.env._replace_goal_in_obs(o_t, new_goal)
+            o2_her = env.env._replace_goal_in_obs(o2_t, new_goal)
+            r_her =  env.env._compute_reward(o2_t, 0)
+            if r_her == 0:
+              d_her = 1
+            else:
+              d_her = d_t
+            replay_buffer.store(o_her, a_t, r_her, o2_her, d_her)
+        ## Update handling
+        # TODO Make this in parallel?
+        if t_total >= update_after: #and (t_total-t_last_update) >= update_every:
+          # Update for amount of environment steps done
+          for j in range(n_updates):#t_total-t_last_update):
+            batch = replay_buffer.sample_batch(batch_size)
+            update(data=batch)
+          #t_last_update = t_total
+      ## End of epoch
+      # Save model
+      if not test_only and ((epoch % save_freq == 0) or (epoch == n_epochs)):
+          #logger.save_state({'env': env}, None)
+        save_model_training(path=checkpoint_dir, epoch=epoch, ac=ac, ac_targ=ac_targ, replay_buffer=replay_buffer, pi_optimizer=pi_optimizer, q_optimizer=q_optimizer, t_total=t_total)
 
     # Test the performance of the deterministic version of the agent.
     if perform_test:
@@ -496,12 +499,14 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
       logger.log_tabular('GoalReached', average_only=True)
       logger.log_tabular('Collided', average_only=True)
       logger.log_tabular('CriticallyCollided', average_only=True)
+      logger.log_tabular('EpLen', average_only=True)
+      logger.log_tabular('TotalEnvInteracts', t)
       if perform_test:
         logger.log_tabular('TestEpRet', with_min_and_max=True)
-      logger.log_tabular('EpLen', average_only=True)
-      if perform_test:
         logger.log_tabular('TestEpLen', average_only=True)
-      logger.log_tabular('TotalEnvInteracts', t)
+        logger.log_tabular('TestGoalReached', average_only=True)
+        logger.log_tabular('TestCollided', average_only=True)
+        logger.log_tabular('TestCriticallyCollided', average_only=True)
       logger.log_tabular('Q1Vals', with_min_and_max=True)
       logger.log_tabular('Q2Vals', with_min_and_max=True)
       logger.log_tabular('LogPi', with_min_and_max=True)
@@ -509,6 +514,15 @@ def sac_her(env, test_env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), s
       logger.log_tabular('LossQ', average_only=True)
       logger.log_tabular('Time', time.time()-start_time)
       #logger.log_tabular('TimeToGoal', average_only=True)
+      logger.dump_tabular()
+
+    if test_only:
+      logger.log_tabular('Epoch', epoch)
+      logger.log_tabular('TestEpRet', with_min_and_max=True)
+      logger.log_tabular('TestEpLen', average_only=True)
+      logger.log_tabular('TestGoalReached', average_only=True)
+      logger.log_tabular('TestCollided', average_only=True)
+      logger.log_tabular('TestCriticallyCollided', average_only=True)
       logger.dump_tabular()
 
 
